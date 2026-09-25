@@ -327,7 +327,7 @@
         background: var(--bg);
         border: 1px solid var(--border);
         padding: 10px 4px;
-        min-height: 64px;
+        min-height: 76px;
         font-size: 0.86rem;
         font-weight: 700;
         transition:
@@ -375,17 +375,30 @@
           opacity: 1;
         }
       }
-      .seat .badge {
-        position: absolute;
-        top: -8px;
-        right: -6px;
-        font-size: 0.85rem;
-        background: var(--surface);
-        border-radius: 50%;
-        padding: 1px;
+      .seat .badges {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
       }
-      .seat .badge.unmet {
-        filter: grayscale(1) opacity(0.6);
+      .seat .badge {
+        border-radius: 4px;
+        padding: 1px 3px;
+        font-size: 0.62rem;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+      .seat .badge.screen {
+        color: var(--teal);
+        background: rgba(15, 118, 110, 0.12);
+      }
+      .seat .badge.sub {
+        color: var(--purple);
+        background: rgba(161, 76, 120, 0.12);
+      }
+      .seat .badge.aircon {
+        color: #1d4ed8;
+        background: #dbeafe;
       }
 
       /* ===== 実行ボタン ===== */
@@ -541,7 +554,7 @@
       <section id="student-settings">
         <h2>生徒と希望の設定</h2>
         <p class="desc">
-          名前は自由に編集・追加・削除できます。「スクリーン希望」は前2列、「サブ講師希望」はサブ講師席に近い最後列を優先して割り当てます。空調側を避ける希望はゾーン希望より優先します。
+          名前は自由に編集・追加・削除できます。「スクリーン希望」は前2列、「サブ講師希望」はサブ講師席に近い最後列を優先して割り当てます。この2つはどちらか一方を選べます。空調側を避ける希望はゾーン希望より優先します。
         </p>
         <div id="student-list"></div>
         <div class="list-actions">
@@ -576,8 +589,7 @@
             ></span
             >サブ講師優先ゾーン(最後列)
           </div>
-          <div class="legend-item">スクリーン希望を実現</div>
-          <div class="legend-item">サブ講師希望を実現</div>
+          <div class="legend-item">✓ 希望を実現した席にラベルを表示</div>
           <div class="legend-item">❄ 空調側の席</div>
         </div>
         <p class="scroll-hint">→ 横にスクロールできます</p>
@@ -690,7 +702,7 @@
                 id: newId(),
                 name: s.name || '',
                 screenPref: !!s.screenPref,
-                subPref: !!s.subPref,
+                subPref: !!s.subPref && !s.screenPref,
                 avoidAircon: !!s.avoidAircon,
               }));
               return;
@@ -771,9 +783,9 @@
     <div class="student-row" data-id="${s.id}">
       <span class="idx">${i + 1}</span>
       <input type="text" value="${escapeHtml(s.name)}" placeholder="生徒名" data-role="name">
-      <span class="pref-chip screen ${s.screenPref ? 'on' : ''}" data-role="screen">スクリーン希望</span>
-      <span class="pref-chip sub ${s.subPref ? 'on' : ''}" data-role="sub">サブ講師希望</span>
-      <span class="pref-chip aircon ${s.avoidAircon ? 'on' : ''}" data-role="aircon">空調側を避ける</span>
+      <button type="button" class="pref-chip screen ${s.screenPref ? 'on' : ''}" data-role="screen" aria-pressed="${s.screenPref}">スクリーン希望</button>
+      <button type="button" class="pref-chip sub ${s.subPref ? 'on' : ''}" data-role="sub" aria-pressed="${s.subPref}">サブ講師希望</button>
+      <button type="button" class="pref-chip aircon ${s.avoidAircon ? 'on' : ''}" data-role="aircon" aria-pressed="${s.avoidAircon}">空調側を避ける</button>
       <button type="button" class="del-btn" data-role="del">✕</button>
     </div>
   `,
@@ -819,10 +831,12 @@
         const role = e.target.dataset.role;
         if (role === 'screen') {
           s.screenPref = !s.screenPref;
+          if (s.screenPref) s.subPref = false;
           saveStudents();
           renderStudentList();
         } else if (role === 'sub') {
           s.subPref = !s.subPref;
+          if (s.subPref) s.screenPref = false;
           saveStudents();
           renderStudentList();
         } else if (role === 'aircon') {
@@ -868,15 +882,17 @@
             : isBackZone(seat)
               ? 'zone-back-seat'
               : '';
-          let badge = '';
+          const badges = [];
           if (student) {
             if (student.screenPref && isFrontZone(seat))
-              badge += `<span class="badge" title="スクリーン希望を実現">希望</span>`;
+              badges.push(`<span class="badge screen" title="スクリーン希望を実現">前方希望✓</span>`);
             if (student.subPref && isBackZone(seat))
-              badge += `<span class="badge" title="サブ講師希望を実現">希望</span>`;
+              badges.push(`<span class="badge sub" title="サブ講師希望を実現">講師希望✓</span>`);
+            if (student.avoidAircon && !isAirconSeat(seat))
+              badges.push(`<span class="badge aircon" title="空調側を避ける希望を実現">空調回避✓</span>`);
           }
           const content = student
-            ? `<span class="seat-name">${escapeHtml(seatDisplayName(student.name))}</span>${badge}`
+            ? `<span class="seat-name">${escapeHtml(seatDisplayName(student.name))}</span>${badges.length ? `<span class="badges">${badges.join('')}</span>` : ''}`
             : `<span class="seat-name">空席</span>`;
           html.push(
             `<div class="cell seat ${zoneClass} ${isAirconSeat(seat) ? 'aircon-seat' : ''} ${student ? 'filled settled' : 'empty'}" style="grid-row:${gridRowOf(seat.row)};grid-column:${seat.col};">${content}</div>`,
