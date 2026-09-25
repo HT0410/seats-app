@@ -982,6 +982,31 @@
       }
 
       let rollTimer = null;
+      let audioContext = null;
+
+      function playTone(frequency, startTime, duration, volume) {
+        if (!audioContext) return;
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(frequency, startTime);
+        gain.gain.setValueAtTime(0.0001, startTime);
+        gain.gain.exponentialRampToValueAtTime(volume, startTime + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(startTime);
+        oscillator.stop(startTime + duration + 0.01);
+      }
+
+      function playResultSound() {
+        if (!audioContext || audioContext.state !== 'running') return;
+        const now = audioContext.currentTime;
+        [523.25, 659.25, 783.99].forEach((frequency, index) => {
+          playTone(frequency, now + index * 0.12, 0.35, 0.055);
+        });
+      }
+
       function runShuffle() {
         const btn = document.getElementById('shuffle-btn');
         const warningBox = document.getElementById('warning-box');
@@ -1003,6 +1028,12 @@
         warningBox.classList.remove('visible');
         renderSeatMap(null);
 
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          audioContext ||= new AudioContextClass();
+          audioContext.resume().catch(() => {});
+        }
+
         const namesPool = activeStudents.map((s) => s.name || '(無名)');
         let ticks = 0;
         rollTimer = setInterval(() => {
@@ -1017,11 +1048,15 @@
                   namesPool[Math.floor(Math.random() * namesPool.length)];
             });
           ticks++;
-          if (ticks >= 10) {
-            clearInterval(rollTimer);
-            finalizeShuffle(activeStudents);
+          if (ticks % 8 === 0 && audioContext?.state === 'running') {
+            playTone(440 + (ticks % 3) * 70, audioContext.currentTime, 0.06, 0.018);
           }
         }, 60);
+        setTimeout(() => {
+          clearInterval(rollTimer);
+          rollTimer = null;
+          finalizeShuffle(activeStudents);
+        }, 10000);
       }
 
       function finalizeShuffle(activeStudents) {
@@ -1030,6 +1065,7 @@
         const assignment = assignSeats(activeStudents);
         renderSeatMap(assignment);
         spawnParticles(document.getElementById('seat-map'));
+        playResultSound();
 
         const unmet = collectUnmet(activeStudents, assignment);
         if (unmet.length) {
