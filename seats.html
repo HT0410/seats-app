@@ -341,12 +341,16 @@
       .seat.zone-back-seat {
         border-top: 3px solid rgba(161, 76, 120, 0.45);
       }
-      .seat.aircon-avoided {
-        color: #94a3b8;
-        background: #eef2f6;
-        border: 1px dashed #b8c2cf;
-        font-size: 0.74rem;
-        font-weight: 400;
+      .seat.aircon-seat {
+        background: #eef6ff;
+      }
+      .seat.aircon-seat::after {
+        content: '❄';
+        position: absolute;
+        top: 2px;
+        left: 5px;
+        color: #2563eb;
+        font-size: 0.7rem;
       }
       .seat.empty {
         color: var(--muted);
@@ -537,7 +541,7 @@
       <section id="student-settings">
         <h2>生徒と希望の設定</h2>
         <p class="desc">
-          名前は自由に編集・追加・削除できます。「スクリーン希望」は前2列、「サブ講師希望」はサブ講師席に近い最後列を優先して割り当てます。両方チェックした生徒はどちらか一方の空きに優先配置されます。
+          名前は自由に編集・追加・削除できます。「スクリーン希望」は前2列、「サブ講師希望」はサブ講師席に近い最後列を優先して割り当てます。空調側を避ける希望はゾーン希望より優先します。
         </p>
         <div id="student-list"></div>
         <div class="list-actions">
@@ -574,6 +578,7 @@
           </div>
           <div class="legend-item">スクリーン希望を実現</div>
           <div class="legend-item">サブ講師希望を実現</div>
+          <div class="legend-item">❄ 空調側の席</div>
         </div>
         <p class="scroll-hint">→ 横にスクロールできます</p>
         <div class="map-scroll">
@@ -874,7 +879,7 @@
             ? `<span class="seat-name">${escapeHtml(seatDisplayName(student.name))}</span>${badge}`
             : `<span class="seat-name">空席</span>`;
           html.push(
-            `<div class="cell seat ${zoneClass} ${student ? 'filled settled' : 'empty'}" style="grid-row:${gridRowOf(seat.row)};grid-column:${seat.col};">${content}</div>`,
+            `<div class="cell seat ${zoneClass} ${isAirconSeat(seat) ? 'aircon-seat' : ''} ${student ? 'filled settled' : 'empty'}" style="grid-row:${gridRowOf(seat.row)};grid-column:${seat.col};">${content}</div>`,
           );
         });
 
@@ -898,68 +903,74 @@
       }
 
       function assignSeats(activeStudents) {
-        const both = shuffleArray(
-          activeStudents.filter((s) => s.screenPref && s.subPref),
-        );
-        const screenOnly = shuffleArray(
-          activeStudents.filter((s) => s.screenPref && !s.subPref),
-        );
-        const subOnly = shuffleArray(
-          activeStudents.filter((s) => !s.screenPref && s.subPref),
+        const candidates = shuffleArray(activeStudents);
+        const seats = shuffleArray(SEATS);
+        const size = seats.length;
+        const costs = Array.from({ length: size }, (_, studentIndex) =>
+          seats.map((seat) => {
+            const student = candidates[studentIndex];
+            if (!student) return 0;
+            return (
+              (student.avoidAircon && isAirconSeat(seat) ? 1000 : 0) +
+              (student.screenPref && !isFrontZone(seat) ? 10 : 0) +
+              (student.subPref && !isBackZone(seat) ? 10 : 0)
+            );
+          }),
         );
 
-        let frontSeats = shuffleArray(SEATS.filter(isFrontZone));
-        let backSeats = shuffleArray(SEATS.filter(isBackZone));
+        // 全員の希望を同時に評価する。空調回避はゾーン希望より優先する。
+        const rowPotentials = Array(size + 1).fill(0);
+        const colPotentials = Array(size + 1).fill(0);
+        const matchedRow = Array(size + 1).fill(0);
+        const previousCol = Array(size + 1).fill(0);
+        for (let row = 1; row <= size; row++) {
+          matchedRow[0] = row;
+          let currentCol = 0;
+          const minCosts = Array(size + 1).fill(Infinity);
+          const visited = Array(size + 1).fill(false);
+          do {
+            visited[currentCol] = true;
+            const currentRow = matchedRow[currentCol];
+            let nextCol = 0;
+            let delta = Infinity;
+            for (let col = 1; col <= size; col++) {
+              if (visited[col]) continue;
+              const cost =
+                costs[currentRow - 1][col - 1] -
+                rowPotentials[currentRow] -
+                colPotentials[col];
+              if (cost < minCosts[col]) {
+                minCosts[col] = cost;
+                previousCol[col] = currentCol;
+              }
+              if (minCosts[col] < delta) {
+                delta = minCosts[col];
+                nextCol = col;
+              }
+            }
+            for (let col = 0; col <= size; col++) {
+              if (visited[col]) {
+                rowPotentials[matchedRow[col]] += delta;
+                colPotentials[col] -= delta;
+              } else {
+                minCosts[col] -= delta;
+              }
+            }
+            currentCol = nextCol;
+          } while (matchedRow[currentCol] !== 0);
+
+          do {
+            const nextCol = previousCol[currentCol];
+            matchedRow[currentCol] = matchedRow[nextCol];
+            currentCol = nextCol;
+          } while (currentCol !== 0);
+        }
 
         const assignment = new Map();
-        const usedSeatIds = new Set();
-        const usedStudentIds = new Set();
-
-        function takeFrom(seatList, student, allowAircon = false) {
-          const index = seatList.findIndex(
-            (seat) =>
-              allowAircon || !student.avoidAircon || !isAirconSeat(seat),
-          );
-          return index === -1 ? null : seatList.splice(index, 1)[0];
+        for (let col = 1; col <= size; col++) {
+          const student = candidates[matchedRow[col] - 1];
+          if (student) assignment.set(seats[col - 1].id, student);
         }
-        function takePreferredFrom(seatList, student) {
-          return (
-            takeFrom(seatList, student) || takeFrom(seatList, student, true)
-          );
-        }
-        function place(seat, student) {
-          if (!seat) return false;
-          assignment.set(seat.id, student);
-          usedSeatIds.add(seat.id);
-          usedStudentIds.add(student.id);
-          return true;
-        }
-
-        both.forEach((st) => {
-          const frontFirst = Math.random() < 0.5;
-          const seat = frontFirst
-            ? takePreferredFrom(frontSeats, st) ||
-              takePreferredFrom(backSeats, st)
-            : takePreferredFrom(backSeats, st) ||
-              takePreferredFrom(frontSeats, st);
-          place(seat, st);
-        });
-        screenOnly.forEach((st) =>
-          place(takePreferredFrom(frontSeats, st), st),
-        );
-        subOnly.forEach((st) => place(takePreferredFrom(backSeats, st), st));
-
-        const remainingStudents = shuffleArray(
-          activeStudents.filter((s) => !usedStudentIds.has(s.id)),
-        );
-        const remainingSeats = shuffleArray(
-          SEATS.filter((s) => !usedSeatIds.has(s.id)),
-        );
-        remainingStudents.forEach((st) => {
-          const seat = takePreferredFrom(remainingSeats, st);
-          if (seat) place(seat, st);
-        });
-
         return assignment;
       }
 
@@ -977,6 +988,8 @@
             unmet.push(`${st.name || '(無名)'}さん（スクリーン希望）`);
           if (st.subPref && (!seat || !isBackZone(seat)))
             unmet.push(`${st.name || '(無名)'}さん（サブ講師希望）`);
+          if (st.avoidAircon && seat && isAirconSeat(seat))
+            unmet.push(`${st.name || '(無名)'}さん（空調側を避ける希望）`);
         });
         return unmet;
       }
@@ -1050,7 +1063,7 @@
         let ticks = 0;
         rollTimer = setInterval(() => {
           document
-            .querySelectorAll('#seat-map .seat:not(.aircon-avoided)')
+            .querySelectorAll('#seat-map .seat')
             .forEach((el) => {
               el.classList.add('filled', 'rolling');
               el.classList.remove('settled', 'empty');
@@ -1082,7 +1095,7 @@
 
         const unmet = collectUnmet(activeStudents, assignment);
         if (unmet.length) {
-          warningBox.innerHTML = `<b>希望に沿えなかった生徒がいます（座席数の都合）：</b><br>${unmet.join('、 ')}`;
+          warningBox.innerHTML = `<b>希望に沿えなかった生徒がいます：</b><br>${unmet.map(escapeHtml).join('、 ')}`;
           warningBox.classList.add('visible');
         }
 
