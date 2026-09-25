@@ -985,25 +985,43 @@
       let audioContext = null;
 
       function playTone(frequency, startTime, duration, volume) {
-        if (!audioContext) return;
-        const oscillator = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(frequency, startTime);
-        gain.gain.setValueAtTime(0.0001, startTime);
-        gain.gain.exponentialRampToValueAtTime(volume, startTime + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
-        oscillator.connect(gain);
-        gain.connect(audioContext.destination);
-        oscillator.start(startTime);
-        oscillator.stop(startTime + duration + 0.01);
+        try {
+          const oscillator = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          oscillator.type = 'triangle';
+          oscillator.frequency.setValueAtTime(frequency, startTime);
+          gain.gain.setValueAtTime(0.0001, startTime);
+          gain.gain.exponentialRampToValueAtTime(volume, startTime + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+          oscillator.connect(gain);
+          gain.connect(audioContext.destination);
+          oscillator.start(startTime);
+          oscillator.stop(startTime + duration + 0.01);
+        } catch (e) {
+          // 音声が使えなくても抽選は続ける。
+        }
+      }
+
+      function startSound() {
+        try {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          if (!AudioContextClass) return;
+          if (!audioContext) audioContext = new AudioContextClass();
+          if (audioContext.state === 'suspended') {
+            Promise.resolve(audioContext.resume()).catch(() => {});
+          }
+          // クリック操作中に音声を開始して、ブラウザの再生制限を解除する。
+          playTone(660, audioContext.currentTime, 0.08, 0.08);
+        } catch (e) {
+          audioContext = null;
+        }
       }
 
       function playResultSound() {
         if (!audioContext || audioContext.state !== 'running') return;
         const now = audioContext.currentTime;
         [523.25, 659.25, 783.99].forEach((frequency, index) => {
-          playTone(frequency, now + index * 0.12, 0.35, 0.055);
+          playTone(frequency, now + index * 0.12, 0.35, 0.12);
         });
       }
 
@@ -1028,12 +1046,6 @@
         warningBox.classList.remove('visible');
         renderSeatMap(null);
 
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        if (AudioContextClass) {
-          audioContext ||= new AudioContextClass();
-          audioContext.resume().catch(() => {});
-        }
-
         const namesPool = activeStudents.map((s) => s.name || '(無名)');
         let ticks = 0;
         rollTimer = setInterval(() => {
@@ -1049,7 +1061,7 @@
             });
           ticks++;
           if (ticks % 8 === 0 && audioContext?.state === 'running') {
-            playTone(440 + (ticks % 3) * 70, audioContext.currentTime, 0.06, 0.018);
+            playTone(440 + (ticks % 3) * 70, audioContext.currentTime, 0.08, 0.05);
           }
         }, 60);
         setTimeout(() => {
@@ -1057,6 +1069,7 @@
           rollTimer = null;
           finalizeShuffle(activeStudents);
         }, 10000);
+        startSound();
       }
 
       function finalizeShuffle(activeStudents) {
